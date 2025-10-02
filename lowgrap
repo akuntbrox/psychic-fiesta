@@ -1,14 +1,16 @@
--- Low Graphics ONLY — Textures OFF, No Water Animation, No Ambient Effects (LocalScript)
+-- Low Graphics ONLY — with Non-Player Animation Block (pets/NPCs/props)
 
 -- ===== CONFIG =====
 local CONFIG = {
 	ButtonSizePx   = 64,
 	DisplayOrder   = 2000,
 	SnapMarginPx   = 12,
-	StartCorner    = "bottom-right", -- "bottom-right"|"bottom-left"|"top-right"|"top-left"
+	StartCorner    = "bottom-right",
 	RememberThisSession = true,
-	DisableTextures = true,          -- hide Decals/Textures
-	HideSurfaceAppearance = false,   -- EXPERIMENTAL: set SurfaceAppearance maps to "" (safer left false)
+
+	DisableTextures           = true,  -- hide Decals/Textures
+	HideSurfaceAppearance     = false, -- set SA maps to "" (optional, heavier)
+	DisableNonPlayerAnimations = true, -- stop pets/NPC/object animations while low mode is ON
 }
 
 -- ===== Services =====
@@ -21,19 +23,14 @@ local player       = Players.LocalPlayer
 local PlayerGui    = player:WaitForChild("PlayerGui")
 local Terrain      = workspace:FindFirstChildOfClass("Terrain")
 
--- ===== Helpers: safe get/set =====
-local function g(inst, prop)
-	local ok, v = pcall(function() return inst[prop] end)
-	return ok and v or nil
-end
-local function s(inst, prop, val)
-	pcall(function() inst[prop] = val end)
-end
+-- ===== Safe get/set =====
+local function g(inst, prop) local ok,v=pcall(function() return inst[prop] end); return ok and v or nil end
+local function s(inst, prop, val) pcall(function() inst[prop]=val end) end
 
--- ===== Snapshot/Restore =====
+-- ===== Snapshot =====
 local lightingProps = {
 	"GlobalShadows","EnvironmentSpecularScale","EnvironmentDiffuseScale","Brightness",
-	"Ambient","OutdoorAmbient","FogStart","FogEnd","FogColor"
+	"Ambient","OutdoorAmbient","FogStart","FogEnd","FogColor","ClockTime","ShadowSoftness","Technology"
 }
 local terrainProps  = {
 	"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency","WaterColor"
@@ -42,154 +39,171 @@ local terrainProps  = {
 local original = {
 	lighting = {},
 	terrain  = {},
-	postFX   = {},       -- PostEffect -> Enabled
-	decals   = {},       -- Decal -> Transparency
-	textures = {},       -- Texture -> Transparency
-	surfaceA = {},       -- SurfaceAppearance -> maps (optional)
-	atmo     = nil,      -- {obj=Atmosphere, props={...}}
+	postFX   = {},     -- PostEffect.Enabled
+	atmo     = nil,    -- Atmosphere + props
+	decals   = {},     -- Decal.Transparency
+	textures = {},     -- Texture.Transparency
+	surfaceA = {},     -- SurfaceAppearance maps (optional)
 }
-
-local function snapshotLighting()
-	for _, p in ipairs(lightingProps) do original.lighting[p] = g(Lighting, p) end
-	for _, fx in ipairs(Lighting:GetDescendants()) do
-		if fx:IsA("PostEffect") then original.postFX[fx] = fx.Enabled end
-	end
-	-- Atmosphere (flatten later)
-	local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
-	if atmo then
-		original.atmo = {
-			obj = atmo,
-			props = {
-				Density = g(atmo,"Density"),
-				Offset = g(atmo,"Offset"),
-				Color = g(atmo,"Color"),
-				Decay = g(atmo,"Decay"),
-				Glare = g(atmo,"Glare"),
-				Haze = g(atmo,"Haze"),
-				MieScatteringScale = g(atmo,"MieScatteringScale"),
-			}
-		}
+for _,p in ipairs(lightingProps) do original.lighting[p]=g(Lighting,p) end
+for _,fx in ipairs(Lighting:GetDescendants()) do
+	if fx:IsA("PostEffect") then original.postFX[fx]=fx.Enabled end
+end
+do
+	local A = Lighting:FindFirstChildOfClass("Atmosphere")
+	if A then
+		original.atmo = { obj=A, props={
+			Density=g(A,"Density"), Offset=g(A,"Offset"), Color=g(A,"Color"),
+			Decay=g(A,"Decay"), Glare=g(A,"Glare"), Haze=g(A,"Haze"),
+			MieScatteringScale=g(A,"MieScatteringScale"),
+		}}
 	end
 end
+if Terrain then for _,p in ipairs(terrainProps) do original.terrain[p]=g(Terrain,p) end end
 
-local function snapshotTerrain()
-	if not Terrain then return end
-	for _, p in ipairs(terrainProps) do original.terrain[p] = g(Terrain, p) end
-end
-
+-- pre-scan textures (so we can restore)
 local function snapshotVisuals()
 	if CONFIG.DisableTextures then
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("Decal") then
-				if original.decals[obj] == nil then original.decals[obj] = g(obj,"Transparency") end
-			elseif obj:IsA("Texture") then
-				if original.textures[obj] == nil then original.textures[obj] = g(obj,"Transparency") end
+		for _,obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Decal") then if original.decals[obj]==nil then original.decals[obj]=g(obj,"Transparency") end
+			elseif obj:IsA("Texture") then if original.textures[obj]==nil then original.textures[obj]=g(obj,"Transparency") end
 			end
 		end
 	end
 	if CONFIG.HideSurfaceAppearance then
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("SurfaceAppearance") and original.surfaceA[obj] == nil then
+		for _,obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("SurfaceAppearance") and original.surfaceA[obj]==nil then
 				original.surfaceA[obj] = {
-					ColorMap = g(obj,"ColorMap"),
-					MetalnessMap = g(obj,"MetalnessMap"),
-					NormalMap = g(obj,"NormalMap"),
-					RoughnessMap = g(obj,"RoughnessMap")
+					ColorMap=g(obj,"ColorMap"), MetalnessMap=g(obj,"MetalnessMap"),
+					NormalMap=g(obj,"NormalMap"), RoughnessMap=g(obj,"RoughnessMap")
 				}
 			end
 		end
 	end
 end
-
-snapshotLighting()
-snapshotTerrain()
 snapshotVisuals()
 
--- ===== Low graphics apply/restore =====
+-- ===== Animation blocker (non-player rigs) =====
+local animBlockConns = {}  -- Animator -> RBXScriptConnection
+local function isLocalCharacterHumanoid(hum)
+	local char = player.Character
+	return char and hum and hum:IsDescendantOf(char)
+end
+
+local function stopAnimator(animator)
+	-- stop current tracks
+	for _,track in ipairs(animator:GetPlayingAnimationTracks()) do
+		pcall(function() track:Stop(0) end)
+	end
+	-- block future tracks
+	if not animBlockConns[animator] then
+		animBlockConns[animator] = animator.AnimationPlayed:Connect(function(track)
+			pcall(function() track:Stop(0) end)
+		end)
+	end
+end
+
+local function applyAnimationBlock()
+	for _,obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Humanoid") then
+			if not isLocalCharacterHumanoid(obj) then
+				local animator = obj:FindFirstChildOfClass("Animator")
+				if animator then stopAnimator(animator) end
+			end
+		elseif obj:IsA("AnimationController") then
+			local animator = obj:FindFirstChildOfClass("Animator")
+			if animator then stopAnimator(animator) end
+		end
+	end
+	-- also block any animators that appear later (pets spawned on the fly)
+	workspace.DescendantAdded:Connect(function(obj)
+		if obj:IsA("Animator") and CONFIG.DisableNonPlayerAnimations then
+			-- avoid blocking the local player's animator
+			local hum = obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid")
+			if hum and isLocalCharacterHumanoid(hum) then return end
+			stopAnimator(obj)
+		end
+	end)
+end
+
+local function clearAnimationBlock()
+	for anim,conn in pairs(animBlockConns) do
+		if conn then conn:Disconnect() end
+		animBlockConns[anim] = nil
+	end
+	-- Already-stopped animations will not auto-resume (Roblox doesn’t expose rewind).
+end
+
+-- ===== Low toggle =====
 local lowActive = false
 
 local function applyLow()
-	-- Lighting: kill ambient/specular/diffuse, fog, and post effects
-	s(Lighting, "GlobalShadows", false)
-	s(Lighting, "EnvironmentSpecularScale", 0)
-	s(Lighting, "EnvironmentDiffuseScale", 0)
-	s(Lighting, "Brightness", math.clamp((g(Lighting,"Brightness") or 2)*0.8, 0.5, 3))
-	s(Lighting, "Ambient", Color3.fromRGB(0,0,0))
-	s(Lighting, "OutdoorAmbient", Color3.fromRGB(0,0,0))
-	s(Lighting, "FogStart", 0)
-	s(Lighting, "FogEnd", 1e6) -- effectively no fog
-
-	for fx,_ in pairs(original.postFX) do
-		if fx and fx.Parent and fx:IsA("PostEffect") then s(fx,"Enabled", false) end
-	end
-
-	-- Atmosphere: flatten (no ambient haze/glare/mie)
+	-- Lighting flatten
+	s(Lighting,"GlobalShadows",false)
+	s(Lighting,"EnvironmentSpecularScale",0)
+	s(Lighting,"EnvironmentDiffuseScale",0)
+	s(Lighting,"ShadowSoftness",0)
+	s(Lighting,"Brightness",math.clamp((g(Lighting,"Brightness") or 2)*0.85,0.5,3))
+	s(Lighting,"Ambient",Color3.new(0,0,0))
+	s(Lighting,"OutdoorAmbient",Color3.new(0,0,0))
+	for fx in pairs(original.postFX) do if fx and fx.Parent then s(fx,"Enabled",false) end end
 	if original.atmo and original.atmo.obj then
-		local A = original.atmo.obj
-		s(A,"Density", 0)
-		s(A,"Glare", 0)
-		s(A,"Haze", 0)
-		s(A,"MieScatteringScale", 0)
-		-- keep Color/Decay so sky doesn't look broken; they were snapshotted for restore
+		local A=original.atmo.obj
+		s(A,"Density",0); s(A,"Glare",0); s(A,"Haze",0); s(A,"MieScatteringScale",0)
 	end
 
-	-- Terrain: no water animation + simple water
+	-- Terrain / water animation off
 	if Terrain then
-		s(Terrain, "Decoration", false)
-		s(Terrain, "WaterWaveSize", 0)
-		s(Terrain, "WaterWaveSpeed", 0)
-		s(Terrain, "WaterReflectance", 0)
-		s(Terrain, "WaterTransparency", 0.95) -- almost invisible
-		-- Optional: neutral water color (comment out if you prefer game default)
-		-- s(Terrain, "WaterColor", Color3.fromRGB(20,20,20))
+		s(Terrain,"Decoration",false)
+		s(Terrain,"WaterWaveSize",0); s(Terrain,"WaterWaveSpeed",0)
+		s(Terrain,"WaterReflectance",0); s(Terrain,"WaterTransparency",0.95)
 	end
 
-	-- Textures/Decals: hide
+	-- Hide textures/decals
 	if CONFIG.DisableTextures then
-		for obj,_ in pairs(original.decals) do if obj and obj.Parent then s(obj,"Transparency", 1) end end
-		for obj,_ in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency", 1) end end
+		for obj in pairs(original.decals)   do if obj and obj.Parent then s(obj,"Transparency",1) end end
+		for obj in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency",1) end end
 	end
-
-	-- SurfaceAppearance: blank out maps (optional, heavier)
 	if CONFIG.HideSurfaceAppearance then
-		for obj,_ in pairs(original.surfaceA) do
+		for obj in pairs(original.surfaceA) do
 			if obj and obj.Parent then
 				s(obj,"ColorMap",""); s(obj,"MetalnessMap",""); s(obj,"NormalMap",""); s(obj,"RoughnessMap","")
 			end
 		end
 	end
 
+	-- Block non-player animations (pets/NPC/props)
+	if CONFIG.DisableNonPlayerAnimations then
+		applyAnimationBlock()
+	end
+
 	lowActive = true
 end
 
 local function restoreLow()
-	-- Lighting
-	for p, v in pairs(original.lighting) do s(Lighting, p, v) end
-	for fx, was in pairs(original.postFX) do if fx and fx.Parent then s(fx,"Enabled", was) end end
+	-- Lighting restore
+	for p,v in pairs(original.lighting) do s(Lighting,p,v) end
+	for fx,was in pairs(original.postFX) do if fx and fx.Parent then s(fx,"Enabled",was) end end
 	if original.atmo and original.atmo.obj and original.atmo.props then
-		local A = original.atmo.obj
-		for p, v in pairs(original.atmo.props) do s(A, p, v) end
+		for p,v in pairs(original.atmo.props) do s(original.atmo.obj,p,v) end
 	end
 
-	-- Terrain
-	if Terrain then
-		for p, v in pairs(original.terrain) do s(Terrain, p, v) end
-	end
+	-- Terrain restore
+	if Terrain then for p,v in pairs(original.terrain) do s(Terrain,p,v) end end
 
-	-- Textures/Decals
+	-- Visuals restore
 	if CONFIG.DisableTextures then
-		for obj, prev in pairs(original.decals)   do if obj and obj.Parent then s(obj,"Transparency", prev) end end
-		for obj, prev in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency", prev) end end
+		for obj,prev in pairs(original.decals)   do if obj and obj.Parent then s(obj,"Transparency",prev) end end
+		for obj,prev in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency",prev) end end
 	end
-
-	-- SurfaceAppearance
 	if CONFIG.HideSurfaceAppearance then
-		for obj, props in pairs(original.surfaceA) do
-			if obj and obj.Parent then
-				for k,v in pairs(props) do s(obj, k, v) end
-			end
+		for obj,props in pairs(original.surfaceA) do
+			if obj and obj.Parent then for k,v in pairs(props) do s(obj,k,v) end end
 		end
 	end
+
+	-- Unblock animations (new ones will play normally again)
+	clearAnimationBlock()
 
 	lowActive = false
 end
@@ -220,7 +234,7 @@ local anchors = {
 	["top-right"]    = {anchor = Vector2.new(1,0), pos = UDim2.new(1,-20, 0, 20)},
 	["top-left"]     = {anchor = Vector2.new(0,0), pos = UDim2.new(0, 20, 0, 20)},
 }
-local a = anchors[string.lower(CONFIG.StartCorner)] or anchors["bottom-right"]
+local a = anchors[string.lower("bottom-right")] or anchors["bottom-right"]
 Holder.AnchorPoint = a.anchor
 Holder.Position    = a.pos
 
@@ -245,7 +259,6 @@ end
 updateButton()
 
 Button.MouseButton1Click:Connect(function()
-	-- ignore click immediately after a drag
 	if Holder:GetAttribute("DragJustEnded") then
 		Holder:SetAttribute("DragJustEnded", nil)
 		return
@@ -301,15 +314,13 @@ local function snapToEdge()
 	end
 end
 local function beginDrag(input)
-	dragging = true
-	dragInput = input
-	startMousePos = input.Position
+	dragging = true; dragInput = input; startMousePos = input.Position
 end
 local function endDrag()
 	if dragging then
-		dragging = false
+		dragging=false
 		Holder:SetAttribute("DragJustEnded", true)
-		task.delay(0.05, function() Holder:SetAttribute("DragJustEnded", nil) end)
+		task.delay(0.05,function() Holder:SetAttribute("DragJustEnded", nil) end)
 		snapToEdge()
 	end
 end
@@ -319,13 +330,10 @@ Holder.InputBegan:Connect(function(input)
 		beginDrag(input)
 	end
 end)
-Holder.InputEnded:Connect(function(input)
-	if input == dragInput then endDrag() end
-end)
+Holder.InputEnded:Connect(function(input) if input == dragInput then endDrag() end end)
 UserInput.InputChanged:Connect(function(input)
 	if not dragging then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement
-	and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
 
 	local delta = input.Position - startMousePos
 	local startCenter = Holder.AbsolutePosition + Holder.AbsoluteSize * Holder.AnchorPoint
@@ -334,7 +342,6 @@ UserInput.InputChanged:Connect(function(input)
 	local half = Holder.AbsoluteSize * 0.5
 	local clampedTopLeft = clampTopLeft(newCenter - half, Holder.AbsoluteSize)
 	local clampedCenter = clampedTopLeft + half
-
 	Holder.Position = toUDim2FromPixels(clampedCenter, Holder.AnchorPoint)
 end)
 

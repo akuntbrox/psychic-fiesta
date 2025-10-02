@@ -1,0 +1,407 @@
+-- LocalScript: Auto Fishing GUI
+-- Place under StarterGui -> ScreenGui -> LocalScript
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local player = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+-- ====== CONFIG STORAGE ======
+local CONFIG_NAME = "AutoFishingConfig"
+local config = {
+    AutoSell = false,
+    AutoFish = false,
+    LowGraphics = false,
+    SelectedRod = 1,
+    SelectedBobber = 1
+}
+
+-- Load config if exists
+pcall(function()
+    local saved = player:WaitForChild("PlayerGui"):FindFirstChild(CONFIG_NAME)
+    if saved and saved:IsA("StringValue") then
+        config = HttpService:JSONDecode(saved.Value)
+    end
+end)
+
+local function saveConfig()
+    local gui = player:WaitForChild("PlayerGui")
+    local saved = gui:FindFirstChild(CONFIG_NAME)
+    if not saved then
+        saved = Instance.new("StringValue")
+        saved.Name = CONFIG_NAME
+        saved.Parent = gui
+    end
+    saved.Value = HttpService:JSONEncode(config)
+end
+
+-- ====== LOWEST GRAPHICS LOGIC ======
+local LG = {}
+LG.savedEmitters, LG.savedLighting, LG.savedLights, LG.savedDecals, LG.savedTextures, LG.savedParts = {}, {}, {}, {}, {}, {}
+LG.lowestEnabled = false
+local watcherConn = nil
+
+local function safeGet(inst,prop) local ok,val=pcall(function() return inst[prop] end) if ok then return val end return nil end
+local function safeSet(inst,prop,val) pcall(function() inst[prop]=val end) end
+
+local function enableLowestGraphics()
+    if LG.lowestEnabled then return end
+    LG.lowestEnabled=true
+    -- disable emitters
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+            if LG.savedEmitters[obj]==nil then
+                local prev = safeGet(obj,"Enabled")
+                if prev~=nil then LG.savedEmitters[obj]=prev safeSet(obj,"Enabled",false) end
+            end
+        end
+    end
+    -- disable lights
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") or obj:IsA("Beam") then
+            if LG.savedLights[obj]==nil then
+                local prev = safeGet(obj,"Enabled")
+                if prev~=nil then LG.savedLights[obj]=prev safeSet(obj,"Enabled",false) end
+            end
+        end
+    end
+    -- decals/textures
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Decal") then
+            if LG.savedDecals[obj]==nil then LG.savedDecals[obj]=safeGet(obj,"Transparency") safeSet(obj,"Transparency",1) end
+        elseif obj:IsA("Texture") then
+            if LG.savedTextures[obj]==nil then LG.savedTextures[obj]=safeGet(obj,"Transparency") safeSet(obj,"Transparency",1) end
+        end
+    end
+    -- parts
+    for _,part in ipairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") and LG.savedParts[part]==nil then
+            LG.savedParts[part]={mat=safeGet(part,"Material"),ref=safeGet(part,"Reflectance"),cast=safeGet(part,"CastShadow")}
+            pcall(function() part.Material=Enum.Material.Plastic part.Reflectance=0 part.CastShadow=false end)
+        end
+    end
+end
+
+local function disableLowestGraphics()
+    if not LG.lowestEnabled then return end
+    LG.lowestEnabled=false
+    for inst,prev in pairs(LG.savedEmitters) do if inst and inst.Parent then pcall(function() inst.Enabled=prev end) end end
+    for inst,prev in pairs(LG.savedLights) do if inst and inst.Parent then pcall(function() inst.Enabled=prev end) end end
+    for inst,prev in pairs(LG.savedDecals) do if inst and inst.Parent then pcall(function() inst.Transparency=prev end) end end
+    for inst,prev in pairs(LG.savedTextures) do if inst and inst.Parent then pcall(function() inst.Transparency=prev end) end end
+    for inst,prev in pairs(LG.savedParts) do
+        if inst and inst.Parent then
+            pcall(function()
+                if prev.mat~=nil then inst.Material=prev.mat end
+                if prev.ref~=nil then inst.Reflectance=prev.ref end
+                if prev.cast~=nil then inst.CastShadow=prev.cast end
+            end)
+        end
+    end
+    LG.savedEmitters,LG.savedLights,LG.savedDecals,LG.savedTextures,LG.savedParts = {},{},{},{},{}
+end
+
+-- ====== GUI CREATION ======
+local function addCorner(inst,radius) local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,radius or 6) c.Parent=inst return c end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoFishingGUI"
+screenGui.ResetOnSpawn=false
+screenGui.Parent=player:WaitForChild("PlayerGui")
+
+local window = Instance.new("Frame",screenGui)
+window.Size=UDim2.new(0,320,0,200)
+window.Position=UDim2.new(0.3,0,0.3,0)
+window.BackgroundColor3=Color3.fromRGB(28,28,28)
+window.Active=true
+window.Draggable=true
+addCorner(window,10)
+
+local titleBar = Instance.new("Frame",window)
+titleBar.Size=UDim2.new(1,0,0,32)
+titleBar.BackgroundColor3=Color3.fromRGB(40,40,40)
+addCorner(titleBar,10)
+
+local title = Instance.new("TextLabel",titleBar)
+title.Size=UDim2.new(1,-80,1,0)
+title.Position=UDim2.new(0,10,0,0)
+title.BackgroundTransparency=1
+title.Text="Auto Fishing Manager"
+title.Font=Enum.Font.SourceSansSemibold
+title.TextSize=16
+title.TextColor3=Color3.fromRGB(230,230,230)
+title.TextXAlignment=Enum.TextXAlignment.Left
+
+local btnClose = Instance.new("TextButton",titleBar)
+btnClose.Size=UDim2.new(0,28,0,20)
+btnClose.Position=UDim2.new(1,-34,0.5,-10)
+btnClose.Text="✕"
+btnClose.Font=Enum.Font.SourceSansBold
+btnClose.TextSize=16
+btnClose.TextColor3=Color3.fromRGB(255,255,255)
+btnClose.BackgroundColor3=Color3.fromRGB(170,40,40)
+addCorner(btnClose,6)
+
+local btnMin = Instance.new("TextButton",titleBar)
+btnMin.Size=UDim2.new(0,28,0,20)
+btnMin.Position=UDim2.new(1,-68,0.5,-10)
+btnMin.Text="—"
+btnMin.Font=Enum.Font.SourceSansBold
+btnMin.TextSize=16
+btnMin.TextColor3=Color3.fromRGB(255,255,255)
+btnMin.BackgroundColor3=Color3.fromRGB(100,100,100)
+addCorner(btnMin,6)
+
+-- TAB BAR
+local tabNames={"Auto Sell","Auto Buy","Auto Farm","Settings"}
+local tabButtons,tabFrames = {},{}
+local tabBar = Instance.new("Frame",window)
+tabBar.Size=UDim2.new(1,0,0,28)
+tabBar.Position=UDim2.new(0,0,0,32)
+tabBar.BackgroundTransparency=1
+
+local tabLayout = Instance.new("UIListLayout",tabBar)
+tabLayout.FillDirection=Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment=Enum.HorizontalAlignment.Left
+tabLayout.SortOrder=Enum.SortOrder.LayoutOrder
+tabLayout.Padding=UDim.new(0,4)
+
+local content = Instance.new("Frame",window)
+content.Size=UDim2.new(1,-16,1,-60)
+content.Position=UDim2.new(0,8,0,60)
+content.BackgroundTransparency=1
+
+for i,name in ipairs(tabNames) do
+    local btn=Instance.new("TextButton",tabBar)
+    btn.Size=UDim2.new(0,70,1,0)
+    btn.Text=name
+    btn.Font=Enum.Font.SourceSansBold
+    btn.TextSize=14
+    btn.TextColor3=Color3.fromRGB(230,230,230)
+    btn.BackgroundColor3=Color3.fromRGB(60,60,60)
+    addCorner(btn,4)
+    tabButtons[name]=btn
+
+    local frame=Instance.new("Frame",content)
+    frame.Size=UDim2.new(1,0,1,0)
+    frame.BackgroundTransparency=1
+    frame.Visible=(i==1)
+    tabFrames[name]=frame
+
+    btn.MouseButton1Click:Connect(function()
+        for _,f in pairs(tabFrames) do f.Visible=false end
+        frame.Visible=true
+        for _,b in pairs(tabButtons) do b.BackgroundColor3=Color3.fromRGB(60,60,60) end
+        btn.BackgroundColor3=Color3.fromRGB(0,120,200)
+    end)
+end
+
+-- ====== AUTO SELL TAB ======
+local sellTab=tabFrames["Auto Sell"]
+local sellLayout=Instance.new("UIListLayout",sellTab)
+sellLayout.Padding=UDim.new(0,6)
+sellLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+
+local autoSellBtn=Instance.new("TextButton",sellTab)
+autoSellBtn.Size=UDim2.new(0.9,0,0,36)
+autoSellBtn.Text="Auto Sell: OFF"
+autoSellBtn.Font=Enum.Font.SourceSansBold
+autoSellBtn.TextSize=16
+autoSellBtn.TextColor3=Color3.fromRGB(255,255,255)
+autoSellBtn.BackgroundColor3=Color3.fromRGB(50,50,50)
+addCorner(autoSellBtn,6)
+
+local sellOnceBtn=Instance.new("TextButton",sellTab)
+sellOnceBtn.Size=UDim2.new(0.9,0,0,28)
+sellOnceBtn.Text="Sell Once"
+sellOnceBtn.Font=Enum.Font.SourceSans
+sellOnceBtn.TextSize=14
+sellOnceBtn.TextColor3=Color3.fromRGB(240,240,240)
+sellOnceBtn.BackgroundColor3=Color3.fromRGB(80,80,80)
+addCorner(sellOnceBtn,6)
+
+-- Replace with your SellRemote path
+local SellRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_net@0.2.0"):WaitForChild("net"):WaitForChild("RF/SellAllItems")
+local autoSellEnabled=config.AutoSell
+autoSellBtn.Text=(autoSellEnabled and "Auto Sell: ON") or "Auto Sell: OFF"
+autoSellBtn.BackgroundColor3=(autoSellEnabled and Color3.fromRGB(0,160,0)) or Color3.fromRGB(50,50,50)
+
+autoSellBtn.MouseButton1Click:Connect(function()
+    autoSellEnabled = not autoSellEnabled
+    config.AutoSell=autoSellEnabled
+    saveConfig()
+    autoSellBtn.Text=(autoSellEnabled and "Auto Sell: ON") or "Auto Sell: OFF"
+    autoSellBtn.BackgroundColor3=(autoSellEnabled and Color3.fromRGB(0,160,0)) or Color3.fromRGB(50,50,50)
+end)
+
+sellOnceBtn.MouseButton1Click:Connect(function()
+    local ok,res = pcall(function() return SellRemote:InvokeServer() end)
+    sellOnceBtn.Text = ok and "Sold ✓" or "Err"
+    task.delay(0.8,function() sellOnceBtn.Text="Sell Once" end)
+end)
+
+-- Auto-sell loop
+task.spawn(function()
+    while true do
+        if autoSellEnabled then
+            pcall(function() SellRemote:InvokeServer() end)
+            task.wait(3)
+        else task.wait(0.2) end
+    end
+end)
+
+-- ====== AUTO BUY TAB ======
+local buyTab=tabFrames["Auto Buy"]
+local buyLayout=Instance.new("UIListLayout",buyTab)
+buyLayout.Padding=UDim.new(0,6)
+buyLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+
+local rodOptions={79,80,81} -- example rod IDs
+local bobberOptions={1,2,3} -- example bobber IDs
+
+local rodDropdown = Instance.new("TextButton",buyTab)
+rodDropdown.Size=UDim2.new(0.9,0,0,28)
+rodDropdown.Text="Select Rod"
+rodDropdown.Font=Enum.Font.SourceSans
+rodDropdown.TextSize=14
+rodDropdown.TextColor3=Color3.fromRGB(230,230,230)
+rodDropdown.BackgroundColor3=Color3.fromRGB(50,50,50)
+addCorner(rodDropdown,6)
+
+local buyRodBtn=Instance.new("TextButton",buyTab)
+buyRodBtn.Size=UDim2.new(0.9,0,0,28)
+buyRodBtn.Text="Buy Rod"
+buyRodBtn.Font=Enum.Font.SourceSans
+buyRodBtn.TextSize=14
+buyRodBtn.TextColor3=Color3.fromRGB(255,255,255)
+buyRodBtn.BackgroundColor3=Color3.fromRGB(0,120,200)
+addCorner(buyRodBtn,6)
+
+local bobberDropdown = Instance.new("TextButton",buyTab)
+bobberDropdown.Size=UDim2.new(0.9,0,0,28)
+bobberDropdown.Text="Select Bobber"
+bobberDropdown.Font=Enum.Font.SourceSans
+bobberDropdown.TextSize=14
+bobberDropdown.TextColor3=Color3.fromRGB(230,230,230)
+bobberDropdown.BackgroundColor3=Color3.fromRGB(50,50,50)
+addCorner(bobberDropdown,6)
+
+local buyBobberBtn=Instance.new("TextButton",buyTab)
+buyBobberBtn.Size=UDim2.new(0.9,0,0,28)
+buyBobberBtn.Text="Buy Bobber"
+buyBobberBtn.Font=Enum.Font.SourceSans
+buyBobberBtn.TextSize=14
+buyBobberBtn.TextColor3=Color3.fromRGB(255,255,255)
+buyBobberBtn.BackgroundColor3=Color3.fromRGB(0,120,200)
+addCorner(buyBobberBtn,6)
+
+local rodIndex=config.SelectedRod
+local bobberIndex=config.SelectedBobber
+
+rodDropdown.MouseButton1Click:Connect(function()
+    rodIndex = rodIndex+1
+    if rodIndex>#rodOptions then rodIndex=1 end
+    rodDropdown.Text="Rod ID: "..rodOptions[rodIndex]
+    config.SelectedRod=rodIndex
+    saveConfig()
+end)
+bobberDropdown.MouseButton1Click:Connect(function()
+    bobberIndex=bobberIndex+1
+    if bobberIndex>#bobberOptions then bobberIndex=1 end
+    bobberDropdown.Text="Bobber ID: "..bobberOptions[bobberIndex]
+    config.SelectedBobber=bobberIndex
+    saveConfig()
+end)
+
+local RodRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_net@0.2.0"):WaitForChild("net"):WaitForChild("RF/PurchaseFishingRod")
+local BobberRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_net@0.2.0"):WaitForChild("net"):WaitForChild("RF/PurchaseBait")
+
+buyRodBtn.MouseButton1Click:Connect(function()
+    pcall(function() RodRemote:InvokeServer(rodOptions[rodIndex]) end)
+end)
+buyBobberBtn.MouseButton1Click:Connect(function()
+    pcall(function() BobberRemote:InvokeServer(bobberOptions[bobberIndex]) end)
+end)
+
+-- ====== AUTO FARM TAB ======
+local farmTab=tabFrames["Auto Farm"]
+local farmLayout=Instance.new("UIListLayout",farmTab)
+farmLayout.Padding=UDim.new(0,6)
+farmLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+
+local autoFishBtn=Instance.new("TextButton",farmTab)
+autoFishBtn.Size=UDim2.new(0.9,0,0,36)
+autoFishBtn.Text="Auto Fish: OFF"
+autoFishBtn.Font=Enum.Font.SourceSansBold
+autoFishBtn.TextSize=16
+autoFishBtn.TextColor3=Color3.fromRGB(255,255,255)
+autoFishBtn.BackgroundColor3=Color3.fromRGB(50,50,50)
+addCorner(autoFishBtn,6)
+
+local autoFishEnabled=config.AutoFish
+autoFishBtn.Text=(autoFishEnabled and "Auto Fish: ON") or "Auto Fish: OFF"
+autoFishBtn.BackgroundColor3=(autoFishEnabled and Color3.fromRGB(0,160,0)) or Color3.fromRGB(50,50,50)
+
+local backpack=player:WaitForChild("Backpack")
+
+local function fishOnce()
+    pcall(function() ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/ChargeFishingRod"]:InvokeServer(1758511637.536806) end)
+    pcall(function() ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RF/RequestFishingMinigameStarted"]:InvokeServer(-0.5718746185302734,0.9703583987192584) end)
+    -- this is where the mini eplanation mark that indicate fish is catched
+    pcall(function() ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net["RE/FishingCompleted"]:FireServer() end)
+end
+
+autoFishBtn.MouseButton1Click:Connect(function()
+    autoFishEnabled=not autoFishEnabled
+    config.AutoFish=autoFishEnabled
+    saveConfig()
+    autoFishBtn.Text=(autoFishEnabled and "Auto Fish: ON") or "Auto Fish: OFF"
+    autoFishBtn.BackgroundColor3=(autoFishEnabled and Color3.fromRGB(0,160,0)) or Color3.fromRGB(50,50,50)
+end)
+
+task.spawn(function()
+    while true do
+        if autoFishEnabled then
+            local before=#backpack:GetChildren()
+            fishOnce()
+            task.wait(0.5)
+            local after=#backpack:GetChildren()
+            if after>before then print("Fish caught!") end
+        else task.wait(0.2) end
+    end
+end)
+
+-- ====== SETTINGS TAB ======
+local settingsTab=tabFrames["Settings"]
+local settingsLayout=Instance.new("UIListLayout",settingsTab)
+settingsLayout.Padding=UDim.new(0,6)
+settingsLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+
+local lowGraphicBtn=Instance.new("TextButton",settingsTab)
+lowGraphicBtn.Size=UDim2.new(0.9,0,0,36)
+lowGraphicBtn.Text="Lowest Graphics: OFF"
+lowGraphicBtn.Font=Enum.Font.SourceSansBold
+lowGraphicBtn.TextSize=16
+lowGraphicBtn.TextColor3=Color3.fromRGB(255,255,255)
+lowGraphicBtn.BackgroundColor3=Color3.fromRGB(50,50,50)
+addCorner(lowGraphicBtn,6)
+
+local lowEnabled=config.LowGraphics
+lowGraphicBtn.Text=(lowEnabled and "Lowest Graphics: ON") or "Lowest Graphics: OFF"
+lowGraphicBtn.BackgroundColor3=(lowEnabled and Color3.fromRGB(0,120,200)) or Color3.fromRGB(50,50,50)
+
+lowGraphicBtn.MouseButton1Click:Connect(function()
+    lowEnabled=not lowEnabled
+    config.LowGraphics=lowEnabled
+    saveConfig()
+    if lowEnabled then enableLowestGraphics() else disableLowestGraphics() end
+    lowGraphicBtn.Text=(lowEnabled and "Lowest Graphics: ON") or "Lowest Graphics: OFF"
+    lowGraphicBtn.BackgroundColor3=(lowEnabled and Color3.fromRGB(0,120,200)) or Color3.fromRGB(50,50,50)
+end)
+
+-- ====== WINDOW BUTTONS ======
+btnClose.MouseButton1Click:Connect(function() screenGui:Destroy() end)
+btnMin.MouseButton1Click:Connect(function() window.Visible = not window.Visible end)

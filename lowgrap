@@ -1,1005 +1,125 @@
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+-- Low Graphics Button Toggle (LocalScript)
 
-local Window = Rayfield:CreateWindow({
-    Name = "Fish it | v1.0.0",
-    Icon = 0,
-    LoadingTitle = "FishIt Hub",
-    LoadingSubtitle = "Teleport & Anti-AFK",
-    Theme = "Default",
+-- Services
+local Players   = game:GetService("Players")
+local Lighting  = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
 
-    DisableRayfieldPrompts = true,
-    DisableBuildWarnings  = true,
+local player   = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+local Terrain  = workspace:FindFirstChildOfClass("Terrain")
 
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "FishItHub",
-        FileName = "FishItConfig"
-    }
-})
+-- ===== Utility: snapshot and restore =====
+local function snapshot(target, props)
+	local snap = {}
+	for _, p in ipairs(props) do
+		if target and target[p] ~= nil then
+			snap[p] = target[p]
+		end
+	end
+	return snap
+end
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local VirtualUser = game:GetService("VirtualUser")
-local CoreGui = game:GetService("CoreGui")
-local Lighting = game:GetService("Lighting")
-local Workspace = game:GetService("Workspace")
-local Terrain = Workspace:FindFirstChildOfClass("Terrain")
+local function restore(target, snap)
+	for p, v in pairs(snap) do
+		if target and target[p] ~= nil then
+			target[p] = v
+		end
+	end
+end
 
--- ======= Teleport Spots =======
-local spots = {
-    { name = "Kohana Volcano 1", cf = CFrame.new(-538.848083, 19.0326767, 168.192688, 0.469082385, 3.2667316e-08, 0.883154392, -9.03109623e-08, 1, 1.09787903e-08, -0.883154392, -8.49084785e-08, 0.469082385) },
-    { name = "Kohana Volcano 2", cf = CFrame.new(-524.690796, 36.5126305, 102.421165, 0.923126996, 2.30986839e-08, 0.384495199, -4.46141746e-09, 1, -4.93640187e-08, -0.384495199, 4.38538628e-08, 0.923126996) },
-    { name = "Kohana Volcano 3", cf = CFrame.new(-590.622864, 59.000061, 109.797722, -0.8809762, 3.19409672e-08, 0.473160565, 3.71353117e-08, 1, 1.63656799e-09, -0.473160565, 1.90127416e-08, -0.8809762) },
-    { name = "Kohana Volcano 4", cf = CFrame.new(-612.7771, 66.2707367, 71.6755524, -0.491934597, -5.15529841e-08, 0.870632172, 2.99821465e-08, 1, 7.61541372e-08, -0.870632172, 6.35662758e-08, -0.491934597) },
-    { name = "Kohana Volcano 5", cf = CFrame.new(-606.234924, 19.5159302, 157.759521, -0.55485785, 7.35054897e-08, -0.831945181, 1.77909083e-08, 1, 7.64882913e-08, 0.831945181, 2.76390661e-08, -0.55485785) },
-    { name = "Kohana Volcano 6", cf = CFrame.new(-658.394348, 57.6764526, 76.3918076, -0.902850091, -9.43592013e-08, -0.429955423, -6.14793549e-08, 1, -9.03641535e-08, 0.429955423, -5.51519079e-08, -0.902850091) },
+-- Properties to store
+local lightingProps = {"GlobalShadows","EnvironmentSpecularScale","EnvironmentDiffuseScale","Brightness"}
+local terrainProps  = {"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency"}
 
-    { name = "Ssypus 1", cf = CFrame.new(-3765.69751, -135.074417, -906.893677, 0.704144239, 3.69769531e-08, -0.710056961, -3.15194022e-08, 1, 2.08190993e-08, 0.710056961, 7.72092168e-09, 0.704144239) },
-    { name = "Ssypus 2", cf = CFrame.new(-3784.89648, -135.074417, -957.826172, -0.142568141, -4.04661797e-08, -0.989785016, -2.07488089e-08, 1, -3.78951626e-08, 0.989785016, 1.51342174e-08, -0.142568141) },
-    { name = "Ssypus 3", cf = CFrame.new(-3759.6875, -135.073914, -997.713989, -0.531387687, -5.79906789e-08, -0.847128749, -4.00902387e-08, 1, -4.33077254e-08, 0.847128749, 1.09484022e-08, -0.531387687) },
-    { name = "Ssypus 4", cf = CFrame.new(-3665.63281, -135.074417, -984.54657, -0.794326246, -4.99251023e-08, 0.607491374, -3.50180436e-08, 1, 3.6394507e-08, -0.607491374, 7.63595409e-09, -0.794326246) },
-
-    { name = "Treasure Room 1", cf = CFrame.new(-3600.06958, -277.008698, -1638.56201, -0.999561787, -3.36175376e-09, -0.0296018291, -3.31863914e-09, 1, -1.5056143e-09, 0.0296018291, -1.40671663e-09, -0.999561787) },
-    { name = "Treasure Room 2", cf = CFrame.new(-3581.84131, -279.07373, -1696.15637, -0.999634266, 1.77606871e-08, -0.0270436872, 1.48669974e-08, 1, 1.07201629e-07, 0.0270436872, 1.06760361e-07, -0.999634266) },
-    { name = "Treasure Room 3", cf = CFrame.new(-3600.72632, -276.06427, -1640.79663, -0.696130812, 2.46753973e-09, 0.717914939, 6.21318819e-08, 1, 5.68094869e-08, -0.717914939, 8.41522407e-08, -0.696130812) },
+-- Save originals
+local original = {
+	lighting = snapshot(Lighting, lightingProps),
+	terrain = Terrain and snapshot(Terrain, terrainProps) or {},
+	postFX = {},
 }
 
-local options, nameToIndex = {}, {}
-for i,entry in ipairs(spots) do
-    options[i] = entry.name
-    nameToIndex[entry.name] = i
+-- Snapshot post effects
+for _, obj in ipairs(Lighting:GetDescendants()) do
+	if obj:IsA("PostEffect") then
+		original.postFX[obj] = obj.Enabled
+	end
 end
 
-local delayMs = 300
-local lastChoice = options[1]
+-- Low graphics mode
+local lowActive = false
 
-local function trim(s)
-    if type(s) ~= "string" then return s end
-    return s:match("^%s*(.-)%s*$")
+local function applyLow()
+	Lighting.GlobalShadows = false
+	Lighting.EnvironmentSpecularScale = 0
+	Lighting.EnvironmentDiffuseScale = 0
+	Lighting.Brightness = math.clamp((Lighting.Brightness or 2) * 0.8, 0.5, 4)
+
+	for fx in pairs(original.postFX) do
+		if fx and fx.Parent then
+			fx.Enabled = false
+		end
+	end
+
+	if Terrain then
+		Terrain.Decoration = false
+		Terrain.WaterWaveSize = 0
+		Terrain.WaterWaveSpeed = 0
+		Terrain.WaterReflectance = 0
+		Terrain.WaterTransparency = 0.7
+	end
+
+	lowActive = true
 end
 
-local function resolveCurrentSelection()
-    local flag = Rayfield.Flags and Rayfield.Flags["TeleportSpot"]
-    local candidate = nil
-    if flag then
-        candidate = flag.CurrentOption or flag.Value or flag.CurrentValue
-    end
-    if type(candidate) == "table" and candidate[1] then candidate = candidate[1] end
-    if not candidate or candidate == "" then candidate = lastChoice end
-    return trim(candidate)
+local function restoreAll()
+	restore(Lighting, original.lighting)
+	if Terrain then restore(Terrain, original.terrain) end
+
+	for fx, wasEnabled in pairs(original.postFX) do
+		if fx and fx.Parent then
+			fx.Enabled = wasEnabled
+		end
+	end
+
+	lowActive = false
 end
 
--- ======= Auto Fish TAB (Legit uses player state; Instant uses remotes) =======
-local AutoFishTab = Window:CreateTab("Auto Fish")
-
--- reuse services if already defined
-local Players = Players or game:GetService("Players")
-local LocalPlayer = LocalPlayer or Players.LocalPlayer
-local ReplicatedStorage = ReplicatedStorage or game:GetService("ReplicatedStorage")
-local Workspace = Workspace or game:GetService("Workspace")
-local VIM = game:GetService("VirtualInputManager")
-
--- ---------- Net / remotes (used by Instant) ----------
-local function getNet()
-    local ok, net = pcall(function()
-        return ReplicatedStorage
-            :WaitForChild("Packages")
-            :WaitForChild("_Index")
-            :WaitForChild("sleitnick_net@0.2.0")
-            :WaitForChild("net", 5)
-    end)
-    return ok and net or nil
+local function toggle()
+	if lowActive then
+		restoreAll()
+	else
+		applyLow()
+	end
+	updateButton()
 end
 
-local Net = getNet()
+-- ===== GUI Button =====
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "LowGraphicsUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
 
-local function getRemote(path)
-    if not Net then return nil end
-    local ok, inst = pcall(function() return Net:WaitForChild(path, 1) end)
-    return ok and inst or nil
+local Button = Instance.new("TextButton")
+Button.Size = UDim2.new(0, 140, 0, 50)
+Button.Position = UDim2.new(1, -160, 1, -70) -- bottom-right
+Button.BackgroundColor3 = Color3.fromRGB(40,40,40)
+Button.TextColor3 = Color3.new(1,1,1)
+Button.TextScaled = true
+Button.Text = "Low Graphics: OFF"
+Button.Parent = ScreenGui
+
+function updateButton()
+	if lowActive then
+		Button.Text = "Low Graphics: ON"
+		Button.BackgroundColor3 = Color3.fromRGB(20,100,20)
+	else
+		Button.Text = "Low Graphics: OFF"
+		Button.BackgroundColor3 = Color3.fromRGB(100,20,20)
+	end
 end
 
-local function chargeRod_remote()
-    local rf = getRemote("RF/ChargeFishingRod")
-    if rf and rf.InvokeServer then
-        return pcall(function() rf:InvokeServer(1.25) end) -- tweak if your server wants a different value
-    end
-    return false
-end
+Button.MouseButton1Click:Connect(toggle)
 
-local function startMinigame_remote()
-    local rf = getRemote("RF/RequestFishingMinigameStarted")
-    if rf and rf.InvokeServer then
-        return pcall(function() rf:InvokeServer(0.0, 0.0) end)
-    end
-    return false
-end
-
-local function completeFishing_remote()
-    local re = getRemote("RE/FishingCompleted")
-    if re and re.FireServer then
-        return pcall(function() re:FireServer() end)
-    end
-    return false
-end
-
--- ---------- Fishing GUI + marker (optional assist) ----------
--- Fallback: old legit flow (pre-improvement)
-local function _legacyFinishViaMarker()
-    -- wait a bit for the minigame marker to exist
-    local marker = waitForMarker(2.5)
-    if not marker then return false end
-
-    -- try to complete, then assist with a few clicks
-    local ok = completeFishing_remote()
-    clickCenter(6, 0.035)
-
-    -- consider it success if the fishing state exits shortly after
-    local ended = waitForFishingState(false, 3)
-    return ok or ended
-end
-
-local function getFishingGui(timeout)
-    timeout = timeout or 5
-    local pg = LocalPlayer:WaitForChild("PlayerGui", 5)
-    if not pg then return nil end
-    local gui = pg:FindFirstChild("Fishing")
-    if gui then return gui end
-    local t0 = os.clock()
-    while (os.clock() - t0) < timeout do
-        gui = pg:FindFirstChild("Fishing")
-        if gui then return gui end
-        task.wait(0.1)
-    end
-    return nil
-end
-
-local function isMarker(guiElement)
-    return guiElement
-        and guiElement:IsA("ImageLabel")
-        and guiElement.Visible == true
-        and guiElement.AbsoluteSize.X > 0
-        and guiElement.AbsoluteSize.X < 150
-end
-
-local function waitForMarker(timeout)
-    timeout = timeout or 5
-    local fishingGui = getFishingGui(timeout)
-    if not fishingGui then return nil end
-
-    for _, child in ipairs(fishingGui:GetDescendants()) do
-        if isMarker(child) then
-            return child
-        end
-    end
-
-    local found, con
-    con = fishingGui.DescendantAdded:Connect(function(d)
-        if isMarker(d) then
-            found = d
-            if con then con:Disconnect() con = nil end
-        end
-    end)
-
-    local t0 = os.clock()
-    while not found and (os.clock() - t0) < timeout do
-        task.wait(0.05)
-    end
-    if con then con:Disconnect() end
-    return found
-end
-
--- ---------- Player fishing state (Legit mode) ----------
-local function boolValueTrue(container, name)
-    if not container then return false end
-    local v = container:FindFirstChild(name)
-    return v and v:IsA("BoolValue") and v.Value == true
-end
-
-local function getAttr(inst, name)
-    local ok, val = pcall(function() return inst:GetAttribute(name) end)
-    return ok and val or nil
-end
-
-local function isFishingState()
-    local char = LocalPlayer.Character
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local guiFishing = pg and pg:FindFirstChild("Fishing")
-
-    -- Common patterns tried in order:
-    if getAttr(LocalPlayer, "Fishing") == true then return true end
-    if getAttr(LocalPlayer, "IsFishing") == true then return true end
-    if char and (getAttr(char, "Fishing") == true or getAttr(char, "IsFishing") == true) then return true end
-    if boolValueTrue(LocalPlayer, "Fishing") or boolValueTrue(LocalPlayer, "IsFishing") then return true end
-    if char and (boolValueTrue(char, "Fishing") or boolValueTrue(char, "IsFishing")) then return true end
-    -- Heuristic: Fishing GUI present & visible
-    if guiFishing and guiFishing.Enabled ~= false then
-        -- some games toggle Enabled or visibility of children
-        return true
-    end
-    return false
-end
-
-local function waitForFishingState(desired, timeout)
-    timeout = timeout or 8
-    local t0 = os.clock()
-    while (os.clock() - t0) < timeout do
-        if isFishingState() == desired then return true end
-        task.wait(0.05)
-    end
-    return false
-end
-
--- ---------- Tool & input ----------
-local function getRod()
-    local char = LocalPlayer.Character
-    if char then
-        for _, t in ipairs(char:GetChildren()) do
-            if t:IsA("Tool") and (t.Name:lower():find("rod") or t.Name:lower():find("fish")) then
-                return t
-            end
-        end
-    end
-    for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
-        if t:IsA("Tool") and (t.Name:lower():find("rod") or t.Name:lower():find("fish")) then
-            return t
-        end
-    end
-    return nil
-end
-
-local function equipRod()
-    local rod = getRod()
-    if not rod then return false end
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    if rod.Parent ~= char then
-        pcall(function() rod.Parent = char end)
-        task.wait(0.1)
-    end
-    return true
-end
-
-local function castRod()
-    local rod = getRod()
-    if rod then
-        pcall(function() rod:Activate() end)
-        return true
-    end
-    return false
-end
-
-local function clickCenter(n, gap)
-    n = n or 6
-    gap = gap or 0.04
-    local cam = Workspace.CurrentCamera
-    local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-    local x, y = math.floor(vp.X/2), math.floor(vp.Y/2)
-    for _ = 1, n do
-        if VIM and VIM.SendMouseButtonEvent then
-            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
-        end
-        task.wait(gap)
-    end
-end
-
--- ---------- Loops ----------
-local _af = { running=false, mode="legit", reelDelay=2.0, thread=nil }
-
--- New LEGIT: use player state, play the minigame naturally
-local function doOne_legit(reelDelay)
-    -- make sure we’re holding a rod & cast if not already fishing
-    if not isFishingState() then
-        if equipRod() then
-            castRod()
-        end
-        -- wait until the game actually enters fishing state
-        if not waitForFishingState(true, 8) then
-            -- if it never started, try a gentle retry next tick
-            task.wait(0.4)
-            return
-        end
-    end
-
-    -- once fishing, optionally wait a bit to look legit
-    if reelDelay and reelDelay > 0 then task.wait(reelDelay) end
-
-    -- assist minigame: click around center for a short period or until state ends
-    local t0 = os.clock()
-    while isFishingState() and (os.clock() - t0) < 6 do
-        -- if a marker shows up, click a tad faster
-        local marker = waitForMarker(0.25)
-        if marker then
-            clickCenter(4, 0.03)
-        else
-            clickCenter(2, 0.06)
-        end
-        task.wait(0.05)
-    end
-
-    -- wait for state to end (catch animation, etc.)
-    waitForFishingState(false, 4)
-    task.wait(0.3)
-end
-
--- INSTANT: mirror the old legit flow (marker -> complete -> assist clicks)
-local function doOne_instant()
-    -- 1) Charge & start (server remotes)
-    chargeRod_remote()
-    startMinigame_remote()
-
-    -- 2) Wait for marker (like the old legit did)
-    local marker = waitForMarker(5) -- was ~4s; give it a bit more
-
-    if marker then
-        -- 3) Complete via server remote
-        task.wait(0.05)
-        local ok = completeFishing_remote()
-
-        -- 4) Assist UI a little (same as before)
-        -- clickCenter(6, 0.035)
-
-        -- 5) Confirm we actually exited fishing state; if not, nudge once more
-        if not waitForFishingState(false, 3) then
-            -- try one more complete + a couple of clicks
-            completeFishing_remote()
-            -- clickCenter(4, 0.04)
-            waitForFishingState(false, 2)
-        end
-    else
-        -- No marker showed: do the same fallback your old legit had
-        completeFishing_remote()
-        clickCenter(6, 0.04)
-        waitForFishingState(false, 2)
-    end
-
-    task.wait(0.25)
-end
-
-
-local function loop()
-    while _af.running do
-        if _af.mode == "instant" then
-            doOne_instant()
-        else
-            doOne_legit(_af.reelDelay)
-        end
-    end
-end
-
-local function startAutoFish(opts)
-    if _af.running then return end
-    opts = opts or {}
-    if typeof(opts.mode) == "string" then
-        local m = opts.mode:lower()
-        if m == "instant" or m == "legit" then _af.mode = m end
-    end
-    if typeof(opts.reelDelay) == "number" then
-        _af.reelDelay = tonumber(string.format("%.1f", math.max(2.0, opts.reelDelay)))
-    end
-    _af.running = true
-    _af.thread = task.spawn(loop)
-end
-
-local function stopAutoFish()
-    _af.running = false
-    if _af.thread then task.cancel(_af.thread) _af.thread = nil end
-end
-
--- ---------- UI (mutually exclusive toggles) ----------
-local legitEnabled, instantEnabled = false, false
-local reelDelaySec = 2.0
-
-AutoFishTab:CreateToggle({
-    Name = "Auto Fish (Legit)",
-    CurrentValue = false,
-    Flag = "AF_Legit",
-    Save = true,
-    Callback = function(v)
-        legitEnabled = v and true or false
-        if v then
-            -- turn off instant if it was on
-            if instantEnabled then
-                instantEnabled = false
-                local f = Rayfield.Flags and Rayfield.Flags["AF_Instant"]
-                if f and f.Set then pcall(function() f:Set(false) end) end
-            end
-            stopAutoFish()
-            startAutoFish({mode="legit", reelDelay=reelDelaySec})
-            Rayfield:Notify({Title="Auto Fish", Content="Legit mode ON (uses player fishing state).", Duration=2})
-        else
-            stopAutoFish()
-            Rayfield:Notify({Title="Auto Fish", Content="Legit mode OFF", Duration=2})
-        end
-    end,
-})
-
-AutoFishTab:CreateSlider({
-    Name = "Reel Delay (sec)",
-    Range = {2.0, 10.0},
-    Increment = 0.1,
-    CurrentValue = 2.0,
-    Flag = "AF_ReelDelay",
-    Save = true,
-    Callback = function(v)
-        v = tonumber(v) or 2.0
-        if v < 2.0 then v = 2.0 end
-        reelDelaySec = tonumber(string.format("%.1f", v))
-        if _af.running and _af.mode == "legit" then
-            stopAutoFish()
-            startAutoFish({mode="legit", reelDelay=reelDelaySec})
-        end
-    end,
-})
-
-AutoFishTab:CreateToggle({
-    Name = "Instant Fishing (skip minigame)",
-    CurrentValue = false,
-    Flag = "AF_Instant",
-    Save = true,
-    Callback = function(v)
-        instantEnabled = v and true or false
-        if v then
-            if legitEnabled then
-                legitEnabled = false
-                local f = Rayfield.Flags and Rayfield.Flags["AF_Legit"]
-                if f and f.Set then pcall(function() f:Set(false) end) end
-            end
-            stopAutoFish()
-            startAutoFish({mode="instant"})
-            Rayfield:Notify({Title="Auto Fish", Content="Instant mode ON (remote-based).", Duration=2})
-        else
-            stopAutoFish()
-            Rayfield:Notify({Title="Auto Fish", Content="Instant mode OFF", Duration=2})
-        end
-    end,
-})
-
--- Restore saved choices on load
-task.defer(function()
-    local f = Rayfield.Flags
-    if not f then return end
-
-    local rawDelay = f["AF_ReelDelay"] and (f["AF_ReelDelay"].CurrentValue or f["AF_ReelDelay"].Value)
-    if typeof(rawDelay) == "number" then
-        reelDelaySec = tonumber(string.format("%.1f", math.max(2.0, rawDelay)))
-    end
-
-    local wantLegit = f["AF_Legit"] and (f["AF_Legit"].CurrentValue or f["AF_Legit"].Value)
-    local wantInstant = f["AF_Instant"] and (f["AF_Instant"].CurrentValue or f["AF_Instant"].Value)
-
-    if wantLegit and wantInstant then wantInstant = false end
-    if wantLegit then
-        legitEnabled = true
-        startAutoFish({mode="legit", reelDelay=reelDelaySec})
-    elseif wantInstant then
-        instantEnabled = true
-        startAutoFish({mode="instant"})
-    end
-end)
-
--- Safety: stop on respawn; will re-evaluate flags shortly after
-LocalPlayer.CharacterAdded:Connect(function()
-    stopAutoFish()
-    task.wait(0.2)
-    local f = Rayfield.Flags
-    if not f then return end
-    local wantLegit = f["AF_Legit"] and (f["AF_Legit"].CurrentValue or f["AF_Legit"].Value)
-    local wantInstant = f["AF_Instant"] and (f["AF_Instant"].CurrentValue or f["AF_Instant"].Value)
-    if wantLegit then
-        startAutoFish({mode="legit", reelDelay=reelDelaySec})
-    elseif wantInstant then
-        startAutoFish({mode="instant"})
-    end
-end)
-
--- ======= Teleport TAB =======
-local TeleTab = Window:CreateTab("Teleport")
-
-TeleTab:CreateDropdown({
-    Name = "Select Spot",
-    Options = options,
-    CurrentOption = options[1],
-    Flag = "TeleportSpot",
-    Save = true,
-    Callback = function(choice)
-        if type(choice) == "string" then
-            lastChoice = choice
-        elseif type(choice) == "number" and options[choice] then
-            lastChoice = options[choice]
-        elseif type(choice) == "table" and choice[1] then
-            lastChoice = choice[1]
-        end
-    end,
-})
-
-TeleTab:CreateSlider({
-    Name = "Teleport Delay (ms)",
-    Range = {0, 1000},
-    Increment = 50,
-    CurrentValue = delayMs,
-    Flag = "TeleportDelay",
-    Save = true,
-    Callback = function(v) delayMs = v end,
-})
-
-TeleTab:CreateButton({
-    Name = "Teleport Now",
-    Callback = function()
-        local currentName = resolveCurrentSelection()
-        local idx = nameToIndex[currentName]
-        local entry = idx and spots[idx]
-        if not entry then
-            Rayfield:Notify({Title="Teleport", Content="No valid spot selected", Duration=3})
-            return
-        end
-
-        local sliderVal = (Rayfield.Flags and Rayfield.Flags["TeleportDelay"] and (Rayfield.Flags["TeleportDelay"].CurrentValue or Rayfield.Flags["TeleportDelay"].Value)) or delayMs
-        local waitSec = (type(sliderVal) == "number") and (sliderVal/1000) or (delayMs/1000)
-
-        task.delay(waitSec, function()
-            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-            local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 2))
-            if not hrp then
-                Rayfield:Notify({Title="Teleport", Content="HumanoidRootPart missing", Duration=3})
-                return
-            end
-            local ok = pcall(function() char:PivotTo(entry.cf) end)
-            if not ok then pcall(function() hrp.CFrame = entry.cf end) end
-            Rayfield:Notify({Title="Teleport", Content="Teleported to "..entry.name, Duration=3})
-        end)
-    end,
-})
-
--- ======= Auto Buy TAB =======
-local BuyTab = Window:CreateTab("Auto Buy")
-
--- Rods: name -> {id, price}
-local rodOptions = {
-    ["Midnight Rod"] = { id = 80, price = "50K" },
-    ["Astral Rod"]   = { id = 5,  price = "1M" },
-}
-
--- Bobbers/Bait: name -> {id, price}
-local bobberOptions = {
-    ["Midnight Bobber"] = { id = 3,  price = "3K" },
-    ["Chroma Bait"]     = { id = 6,  price = "290K" },
-    ["Aether Bait"]     = { id = 16, price = "3.7M" },
-}
-
--- Helpers
-local function setLabel(lbl, txt)
-    if not lbl then return end
-    if typeof(lbl) == "table" and typeof(lbl.Set) == "function" then
-        -- Rayfield 4.x+ returns a proxy with :Set()
-        pcall(function() lbl:Set(tostring(txt)) end)
-    else
-        -- Older builds expose the TextLabel instance directly
-        pcall(function() lbl.Text = tostring(txt) end)
-    end
-end
-
-local function fmtCoins(n)
-    if type(n) ~= "number" then return tostring(n) end
-    local s = tostring(n)
-    local left, num, right = s:match("^([^%d]*%d)(%d*)(.-)$")
-    return left .. num:reverse():gsub("(%d%d%d)", "%1,"):reverse() .. right
-end
-
-local function getNet()
-    -- ReplicatedStorage -> Packages -> _Index -> sleitnick_net@0.2.0 -> net
-    local RS = game:GetService("ReplicatedStorage")
-    return RS:WaitForChild("Packages")
-             :WaitForChild("_Index")
-             :WaitForChild("sleitnick_net@0.2.0")
-             :WaitForChild("net")
-end
-
--- ===== Rod UI =====
-local rodNames = {}
-for name in pairs(rodOptions) do table.insert(rodNames, name) end
-table.sort(rodNames)
-
-local rodDropdown = BuyTab:CreateDropdown({
-    Name = "Select Rod",
-    Options = rodNames,
-    CurrentOption = rodNames[1],
-    Flag = "SelectedRod",
-    Save = true,
-})
--- after you create rodDropdown:
-local function getRodNameFromDropdownValue(v)
-    if type(v) == "table" then return v[1]
-    else return v
-    end
-end
-
-local priceLabelRod = BuyTab:CreateLabel("Price: " .. fmtCoins(rodOptions[rodNames[1]].price))
-rodDropdown.Callback = function(selected)
-    local name = getRodNameFromDropdownValue(selected)
-    local data = name and rodOptions[name]
-    if data then
-        setLabel(priceLabelRod, "Rod: " .. name .. "  | Price: " .. data.price)
-    end
-end
-
-BuyTab:CreateButton({
-    Name = "Buy Rod",
-    Callback = function()
-        local sel = Rayfield.Flags["SelectedRod"]
-        local name = sel and (sel.CurrentOption or sel.Value or sel.CurrentValue)
-        if type(name) == "table" then name = name[1] end
-        local data = name and rodOptions[name]
-        if not data then
-            Rayfield:Notify({Title="Auto Buy", Content="Select a rod first.", Duration=3})
-            return
-        end
-
-        local ok, err = pcall(function()
-            getNet():WaitForChild("RF/PurchaseFishingRod"):InvokeServer(data.id)
-        end)
-        if ok then
-            Rayfield:Notify({Title="Auto Buy", Content="Purchased ".. name, Duration=3})
-        else
-            Rayfield:Notify({Title="Auto Buy (Error)", Content=tostring(err), Duration=4})
-        end
-    end,
-})
-
-BuyTab:CreateDivider()
-
--- ===== Bobber/Bait UI =====
-local bobberNames = {}
-for name in pairs(bobberOptions) do table.insert(bobberNames, name) end
-table.sort(bobberNames)
-
-local bobberDropdown = BuyTab:CreateDropdown({
-    Name = "Select Bobber/Bait",
-    Options = bobberNames,
-    CurrentOption = bobberNames[1],
-    Flag = "SelectedBobber",
-    Save = true,
-})
-
--- after you create bobberDropdown:
-local function getBobberNameFromDropdownValue(v)
-    if type(v) == "table" then return v[1]
-    else return v
-    end
-end
-
-local priceLabelBobber = BuyTab:CreateLabel("Price: " .. fmtCoins(bobberOptions[bobberNames[1]].price))
-bobberDropdown.Callback = function(selected)
-    local name = getBobberNameFromDropdownValue(selected)
-    local data = name and bobberOptions[name]
-    if data then
-        setLabel(priceLabelBobber, "Item: " .. name .. "  | Price: " .. data.price)
-    end
-end
-
-
-BuyTab:CreateButton({
-    Name = "Buy Bobber/Bait",
-    Callback = function()
-        local sel = Rayfield.Flags["SelectedBobber"]
-        local name = sel and (sel.CurrentOption or sel.Value or sel.CurrentValue)
-        if type(name) == "table" then name = name[1] end
-        local data = name and bobberOptions[name]
-        if not data then
-            Rayfield:Notify({Title="Auto Buy", Content="Select a bobber/bait first.", Duration=3})
-            return
-        end
-
-        local ok, err = pcall(function()
-            getNet():WaitForChild("RF/PurchaseBait"):InvokeServer(data.id)
-        end)
-        if ok then
-            Rayfield:Notify({Title="Auto Buy", Content="Purchased ".. name, Duration=3})
-        else
-            Rayfield:Notify({Title="Auto Buy (Error)", Content=tostring(err), Duration=4})
-        end
-    end,
-})
-
-
--- ======= Settings (NO LAG + Disable Animations) =======
-local SettingsTab = Window:CreateTab("Settings")
-
-local Lighting = game:GetService("Lighting")
-local Workspace = game:GetService("Workspace")
-local Terrain = Workspace:FindFirstChildOfClass("Terrain")
-
--- ========= NO LAG (Texture Simplifier + Water Freeze) =========
-local _tex = {
-    parts = {},        -- [BasePart] = {Material=..., Reflectance=...}
-    meshTex = {},      -- [MeshPart/SpecialMesh] = old TextureId
-    reparent = {},     -- visuals we unparent (Decal/Texture/SurfaceAppearance)
-    conn = nil,
-    water = nil,       -- original water props
-}
-
-local function _tex_unparent(inst)
-    if inst and inst.Parent then
-        table.insert(_tex.reparent, {obj = inst, parent = inst.Parent})
-        inst.Parent = nil
-    end
-end
-
-local function _tex_reparent_all()
-    for _, rec in ipairs(_tex.reparent) do
-        if rec.obj then
-            pcall(function() rec.obj.Parent = rec.parent end)
-        end
-    end
-    _tex.reparent = {}
-end
-
-local function _tex_simplify_for(inst)
-    -- Strip decals / textures / surface appearance
-    if inst:IsA("Decal") or inst:IsA("Texture") or inst:IsA("SurfaceAppearance") then
-        _tex_unparent(inst)
-        return
-    end
-
-    -- Smooth plastic & zero reflectance on BaseParts
-    if inst:IsA("BasePart") then
-        if not _tex.parts[inst] then
-            _tex.parts[inst] = {Material = inst.Material, Reflectance = inst.Reflectance}
-        end
-        pcall(function()
-            inst.Material = Enum.Material.SmoothPlastic
-            inst.Reflectance = 0
-        end)
-    end
-
-    -- Remove texture IDs from meshes
-    if inst:IsA("MeshPart") then
-        if _tex.meshTex[inst] == nil then _tex.meshTex[inst] = inst.TextureID end
-        pcall(function() inst.TextureID = "" end)
-    elseif inst:IsA("SpecialMesh") then
-        if _tex.meshTex[inst] == nil then _tex.meshTex[inst] = inst.TextureId end
-        pcall(function() inst.TextureId = "" end)
-    end
-end
--- Utility: safe property check
-local function _hasProp(obj, prop)
-    return typeof(obj) == "Instance" and pcall(function() return obj[prop] end)
-end
-
--- Replace your _tex_setWaterSimple with this
-local function _tex_setWaterSimple()
-    if not Terrain then return end
-    _tex.water = _tex.water or {}
-
-    -- stash only existing props
-    if _hasProp(Terrain, "WaterTransparency") and _tex.water.Transparency == nil then
-        _tex.water.Transparency = Terrain.WaterTransparency
-    end
-    if _hasProp(Terrain, "WaterReflectance") and _tex.water.Reflectance == nil then
-        _tex.water.Reflectance = Terrain.WaterReflectance
-    end
-    if _hasProp(Terrain, "WaterWaveSize") and _tex.water.WaveSize == nil then
-        _tex.water.WaveSize = Terrain.WaterWaveSize
-    end
-    if _hasProp(Terrain, "WaterWaveSpeed") and _tex.water.WaveSpeed == nil then
-        _tex.water.WaveSpeed = Terrain.WaterWaveSpeed
-    end
-    if _hasProp(Terrain, "Decoration") and _tex.water.Decoration == nil then
-        _tex.water.Decoration = Terrain.Decoration
-    end
-
-    -- freeze/hide water animation & visuals (only where supported)
-    if _hasProp(Terrain, "WaterTransparency") then Terrain.WaterTransparency = 1 end
-    if _hasProp(Terrain, "WaterReflectance") then Terrain.WaterReflectance = 0 end
-    if _hasProp(Terrain, "WaterWaveSize") then Terrain.WaterWaveSize = 0 end
-    if _hasProp(Terrain, "WaterWaveSpeed") then Terrain.WaterWaveSpeed = 0 end
-    if _hasProp(Terrain, "Decoration") then Terrain.Decoration = false end
-end
-
--- Replace your _tex_restoreWater with this
-local function _tex_restoreWater()
-    if not Terrain or not _tex.water then return end
-    if _tex.water.Transparency ~= nil and _hasProp(Terrain, "WaterTransparency") then
-        Terrain.WaterTransparency = _tex.water.Transparency
-    end
-    if _tex.water.Reflectance ~= nil and _hasProp(Terrain, "WaterReflectance") then
-        Terrain.WaterReflectance = _tex.water.Reflectance
-    end
-    if _tex.water.WaveSize ~= nil and _hasProp(Terrain, "WaterWaveSize") then
-        Terrain.WaterWaveSize = _tex.water.WaveSize
-    end
-    if _tex.water.WaveSpeed ~= nil and _hasProp(Terrain, "WaterWaveSpeed") then
-        Terrain.WaterWaveSpeed = _tex.water.WaveSpeed
-    end
-    if _tex.water.Decoration ~= nil and _hasProp(Terrain, "Decoration") then
-        Terrain.Decoration = _tex.water.Decoration
-    end
-    _tex.water = nil
-end
-
-
-local function enableTextureSimplifier()
-    -- initial pass
-    for _, d in ipairs(Workspace:GetDescendants()) do
-        _tex_simplify_for(d)
-    end
-    -- keep future spawns simplified
-    _tex.conn = Workspace.DescendantAdded:Connect(function(d)
-        task.defer(_tex_simplify_for, d)
-    end)
-
-    -- freeze water animation/visuals
-    _tex_setWaterSimple()
-
-    -- Rayfield:Notify({Title="NO LAG", Content="No More Lag.", Duration=1})
-end
-
-local function disableTextureSimplifier()
-    -- restore BasePart material/reflectance
-    for inst, data in pairs(_tex.parts) do
-        if inst and inst.Parent then
-            pcall(function()
-                inst.Material = data.Material
-                inst.Reflectance = data.Reflectance
-            end)
-        end
-    end
-    _tex.parts = {}
-
-    -- restore mesh texture IDs
-    for inst, old in pairs(_tex.meshTex) do
-        if inst and inst.Parent then
-            pcall(function()
-                if inst:IsA("MeshPart") then
-                    inst.TextureID = old
-                elseif inst:IsA("SpecialMesh") then
-                    inst.TextureId = old
-                end
-            end)
-        end
-    end
-    _tex.meshTex = {}
-
-    -- reparent removed visuals
-    _tex_reparent_all()
-
-    -- disconnect listener
-    if _tex.conn then
-        pcall(function() _tex.conn:Disconnect() end)
-        _tex.conn = nil
-    end
-
-    -- restore water
-    _tex_restoreWater()
-
-    -- Rayfield:Notify({Title="NO LAG", Content="Restored textures & water.", Duration=2})
-end
-
-SettingsTab:CreateToggle({
-    Name = "NO LAG (Textures Off + Water Frozen)",
-    CurrentValue = false,
-    Flag = "TextureSimplifier",
-    Save = true,
-    Callback = function(v)
-        if v then enableTextureSimplifier() else disableTextureSimplifier() end
-    end,
-})
-
--- ========= Disable Animations =========
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
-local _anim = {
-    conns = {},    -- connections to clean up
-    reparent = {}, -- Animate scripts we unparent per-character
-}
-
-local function _anim_unparent(inst)
-    if inst and inst.Parent then
-        table.insert(_anim.reparent, {obj = inst, parent = inst.Parent})
-        inst.Parent = nil
-    end
-end
-
-local function _anim_reparent_all()
-    for _, rec in ipairs(_anim.reparent) do
-        if rec.obj then
-            pcall(function() rec.obj.Parent = rec.parent end)
-        end
-    end
-    _anim.reparent = {}
-end
-
-local function hookAnimator(animator)
-    if not animator then return end
-    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-        pcall(function() track:Stop(0) end)
-    end
-    local c = animator.AnimationPlayed:Connect(function(track)
-        pcall(function() track:Stop(0) end)
-    end)
-    table.insert(_anim.conns, c)
-end
-
-local function disableCharacterAnimateScript(char)
-    if not char then return end
-    local animScript = char:FindFirstChild("Animate")
-    if animScript then
-        _anim_unparent(animScript)
-    end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 2)
-        if animator then hookAnimator(animator) end
-    end
-end
-
-local function enableDisableAnimations()
-    disableCharacterAnimateScript(LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait())
-    local c1 = LocalPlayer.CharacterAdded:Connect(function(char)
-        char:WaitForChild("Humanoid", 10)
-        task.defer(disableCharacterAnimateScript, char)
-    end)
-    table.insert(_anim.conns, c1)
-
-    -- Rayfield:Notify({Title="Animations", Content="All character animations disabled.", Duration=2})
-end
-
-local function disableDisableAnimations()
-    _anim_reparent_all()
-    for _, c in ipairs(_anim.conns) do
-        pcall(function() c:Disconnect() end)
-    end
-    _anim.conns = {}
-    -- Rayfield:Notify({Title="Animations", Content="Character animations restored.", Duration=2})
-end
-
-SettingsTab:CreateToggle({
-    Name = "Disable Character Animations",
-    CurrentValue = false,
-    Flag = "NoAnimations",
-    Save = true,
-    Callback = function(v)
-        if v then enableDisableAnimations() else disableDisableAnimations() end
-    end,
-})
-
-
--- ======= UTILITIES TAB =======
-local UtilTab = Window:CreateTab("Utilities")
-
-local antiAfkConn = nil
-local function enableAntiAfk()
-    if antiAfkConn then return end
-    antiAfkConn = LocalPlayer.Idled:Connect(function()
-        pcall(function()
-            VirtualUser:Button2Down(Vector2.new(0,0))
-            VirtualUser:Button2Up(Vector2.new(0,0))
-        end)
-    end)
-end
-
-local function disableAntiAfk()
-    if antiAfkConn then
-        pcall(function() antiAfkConn:Disconnect() end)
-        antiAfkConn = nil
-    end
-end
-
-UtilTab:CreateToggle({
-    Name = "Anti-AFK",
-    CurrentValue = false,
-    Flag = "AntiAFK",
-    Save = true,
-    Callback = function(v)
-        if v then enableAntiAfk() else disableAntiAfk() end
-    end,
-})
-
-UtilTab:CreateButton({
-    Name = "Close UI",
-    Callback = function() Rayfield:Destroy() end,
-})
-
--- Load saved config
-Rayfield:LoadConfiguration()
+-- Initial state
+updateButton()

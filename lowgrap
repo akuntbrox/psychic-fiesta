@@ -1,125 +1,361 @@
--- Low Graphics Button Toggle (LocalScript)
+-- Low Graphics ONLY — Textures OFF, No Water Animation, No Ambient Effects (LocalScript)
 
--- Services
-local Players   = game:GetService("Players")
-local Lighting  = game:GetService("Lighting")
-local RunService = game:GetService("RunService")
-
-local player   = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
-local Terrain  = workspace:FindFirstChildOfClass("Terrain")
-
--- ===== Utility: snapshot and restore =====
-local function snapshot(target, props)
-	local snap = {}
-	for _, p in ipairs(props) do
-		if target and target[p] ~= nil then
-			snap[p] = target[p]
-		end
-	end
-	return snap
-end
-
-local function restore(target, snap)
-	for p, v in pairs(snap) do
-		if target and target[p] ~= nil then
-			target[p] = v
-		end
-	end
-end
-
--- Properties to store
-local lightingProps = {"GlobalShadows","EnvironmentSpecularScale","EnvironmentDiffuseScale","Brightness"}
-local terrainProps  = {"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency"}
-
--- Save originals
-local original = {
-	lighting = snapshot(Lighting, lightingProps),
-	terrain = Terrain and snapshot(Terrain, terrainProps) or {},
-	postFX = {},
+-- ===== CONFIG =====
+local CONFIG = {
+	ButtonSizePx   = 64,
+	DisplayOrder   = 2000,
+	SnapMarginPx   = 12,
+	StartCorner    = "bottom-right", -- "bottom-right"|"bottom-left"|"top-right"|"top-left"
+	RememberThisSession = true,
+	DisableTextures = true,          -- hide Decals/Textures
+	HideSurfaceAppearance = false,   -- EXPERIMENTAL: set SurfaceAppearance maps to "" (safer left false)
 }
 
--- Snapshot post effects
-for _, obj in ipairs(Lighting:GetDescendants()) do
-	if obj:IsA("PostEffect") then
-		original.postFX[obj] = obj.Enabled
+-- ===== Services =====
+local Players      = game:GetService("Players")
+local Lighting     = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local UserInput    = game:GetService("UserInputService")
+
+local player       = Players.LocalPlayer
+local PlayerGui    = player:WaitForChild("PlayerGui")
+local Terrain      = workspace:FindFirstChildOfClass("Terrain")
+
+-- ===== Helpers: safe get/set =====
+local function g(inst, prop)
+	local ok, v = pcall(function() return inst[prop] end)
+	return ok and v or nil
+end
+local function s(inst, prop, val)
+	pcall(function() inst[prop] = val end)
+end
+
+-- ===== Snapshot/Restore =====
+local lightingProps = {
+	"GlobalShadows","EnvironmentSpecularScale","EnvironmentDiffuseScale","Brightness",
+	"Ambient","OutdoorAmbient","FogStart","FogEnd","FogColor"
+}
+local terrainProps  = {
+	"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency","WaterColor"
+}
+
+local original = {
+	lighting = {},
+	terrain  = {},
+	postFX   = {},       -- PostEffect -> Enabled
+	decals   = {},       -- Decal -> Transparency
+	textures = {},       -- Texture -> Transparency
+	surfaceA = {},       -- SurfaceAppearance -> maps (optional)
+	atmo     = nil,      -- {obj=Atmosphere, props={...}}
+}
+
+local function snapshotLighting()
+	for _, p in ipairs(lightingProps) do original.lighting[p] = g(Lighting, p) end
+	for _, fx in ipairs(Lighting:GetDescendants()) do
+		if fx:IsA("PostEffect") then original.postFX[fx] = fx.Enabled end
+	end
+	-- Atmosphere (flatten later)
+	local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+	if atmo then
+		original.atmo = {
+			obj = atmo,
+			props = {
+				Density = g(atmo,"Density"),
+				Offset = g(atmo,"Offset"),
+				Color = g(atmo,"Color"),
+				Decay = g(atmo,"Decay"),
+				Glare = g(atmo,"Glare"),
+				Haze = g(atmo,"Haze"),
+				MieScatteringScale = g(atmo,"MieScatteringScale"),
+			}
+		}
 	end
 end
 
--- Low graphics mode
+local function snapshotTerrain()
+	if not Terrain then return end
+	for _, p in ipairs(terrainProps) do original.terrain[p] = g(Terrain, p) end
+end
+
+local function snapshotVisuals()
+	if CONFIG.DisableTextures then
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Decal") then
+				if original.decals[obj] == nil then original.decals[obj] = g(obj,"Transparency") end
+			elseif obj:IsA("Texture") then
+				if original.textures[obj] == nil then original.textures[obj] = g(obj,"Transparency") end
+			end
+		end
+	end
+	if CONFIG.HideSurfaceAppearance then
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("SurfaceAppearance") and original.surfaceA[obj] == nil then
+				original.surfaceA[obj] = {
+					ColorMap = g(obj,"ColorMap"),
+					MetalnessMap = g(obj,"MetalnessMap"),
+					NormalMap = g(obj,"NormalMap"),
+					RoughnessMap = g(obj,"RoughnessMap")
+				}
+			end
+		end
+	end
+end
+
+snapshotLighting()
+snapshotTerrain()
+snapshotVisuals()
+
+-- ===== Low graphics apply/restore =====
 local lowActive = false
 
 local function applyLow()
-	Lighting.GlobalShadows = false
-	Lighting.EnvironmentSpecularScale = 0
-	Lighting.EnvironmentDiffuseScale = 0
-	Lighting.Brightness = math.clamp((Lighting.Brightness or 2) * 0.8, 0.5, 4)
+	-- Lighting: kill ambient/specular/diffuse, fog, and post effects
+	s(Lighting, "GlobalShadows", false)
+	s(Lighting, "EnvironmentSpecularScale", 0)
+	s(Lighting, "EnvironmentDiffuseScale", 0)
+	s(Lighting, "Brightness", math.clamp((g(Lighting,"Brightness") or 2)*0.8, 0.5, 3))
+	s(Lighting, "Ambient", Color3.fromRGB(0,0,0))
+	s(Lighting, "OutdoorAmbient", Color3.fromRGB(0,0,0))
+	s(Lighting, "FogStart", 0)
+	s(Lighting, "FogEnd", 1e6) -- effectively no fog
 
-	for fx in pairs(original.postFX) do
-		if fx and fx.Parent then
-			fx.Enabled = false
-		end
+	for fx,_ in pairs(original.postFX) do
+		if fx and fx.Parent and fx:IsA("PostEffect") then s(fx,"Enabled", false) end
 	end
 
+	-- Atmosphere: flatten (no ambient haze/glare/mie)
+	if original.atmo and original.atmo.obj then
+		local A = original.atmo.obj
+		s(A,"Density", 0)
+		s(A,"Glare", 0)
+		s(A,"Haze", 0)
+		s(A,"MieScatteringScale", 0)
+		-- keep Color/Decay so sky doesn't look broken; they were snapshotted for restore
+	end
+
+	-- Terrain: no water animation + simple water
 	if Terrain then
-		Terrain.Decoration = false
-		Terrain.WaterWaveSize = 0
-		Terrain.WaterWaveSpeed = 0
-		Terrain.WaterReflectance = 0
-		Terrain.WaterTransparency = 0.7
+		s(Terrain, "Decoration", false)
+		s(Terrain, "WaterWaveSize", 0)
+		s(Terrain, "WaterWaveSpeed", 0)
+		s(Terrain, "WaterReflectance", 0)
+		s(Terrain, "WaterTransparency", 0.95) -- almost invisible
+		-- Optional: neutral water color (comment out if you prefer game default)
+		-- s(Terrain, "WaterColor", Color3.fromRGB(20,20,20))
+	end
+
+	-- Textures/Decals: hide
+	if CONFIG.DisableTextures then
+		for obj,_ in pairs(original.decals) do if obj and obj.Parent then s(obj,"Transparency", 1) end end
+		for obj,_ in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency", 1) end end
+	end
+
+	-- SurfaceAppearance: blank out maps (optional, heavier)
+	if CONFIG.HideSurfaceAppearance then
+		for obj,_ in pairs(original.surfaceA) do
+			if obj and obj.Parent then
+				s(obj,"ColorMap",""); s(obj,"MetalnessMap",""); s(obj,"NormalMap",""); s(obj,"RoughnessMap","")
+			end
+		end
 	end
 
 	lowActive = true
 end
 
-local function restoreAll()
-	restore(Lighting, original.lighting)
-	if Terrain then restore(Terrain, original.terrain) end
+local function restoreLow()
+	-- Lighting
+	for p, v in pairs(original.lighting) do s(Lighting, p, v) end
+	for fx, was in pairs(original.postFX) do if fx and fx.Parent then s(fx,"Enabled", was) end end
+	if original.atmo and original.atmo.obj and original.atmo.props then
+		local A = original.atmo.obj
+		for p, v in pairs(original.atmo.props) do s(A, p, v) end
+	end
 
-	for fx, wasEnabled in pairs(original.postFX) do
-		if fx and fx.Parent then
-			fx.Enabled = wasEnabled
+	-- Terrain
+	if Terrain then
+		for p, v in pairs(original.terrain) do s(Terrain, p, v) end
+	end
+
+	-- Textures/Decals
+	if CONFIG.DisableTextures then
+		for obj, prev in pairs(original.decals)   do if obj and obj.Parent then s(obj,"Transparency", prev) end end
+		for obj, prev in pairs(original.textures) do if obj and obj.Parent then s(obj,"Transparency", prev) end end
+	end
+
+	-- SurfaceAppearance
+	if CONFIG.HideSurfaceAppearance then
+		for obj, props in pairs(original.surfaceA) do
+			if obj and obj.Parent then
+				for k,v in pairs(props) do s(obj, k, v) end
+			end
 		end
 	end
 
 	lowActive = false
 end
 
-local function toggle()
-	if lowActive then
-		restoreAll()
-	else
-		applyLow()
-	end
-	updateButton()
+local function toggleLow()
+	if lowActive then restoreLow() else applyLow() end
 end
 
--- ===== GUI Button =====
+-- ===== Floating draggable button (edge-snap) =====
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "LowGraphicsUI"
+ScreenGui.Name = "LowGraphicsOnlyUI"
 ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.DisplayOrder = CONFIG.DisplayOrder
 ScreenGui.Parent = PlayerGui
 
-local Button = Instance.new("TextButton")
-Button.Size = UDim2.new(0, 140, 0, 50)
-Button.Position = UDim2.new(1, -160, 1, -70) -- bottom-right
-Button.BackgroundColor3 = Color3.fromRGB(40,40,40)
-Button.TextColor3 = Color3.new(1,1,1)
-Button.TextScaled = true
-Button.Text = "Low Graphics: OFF"
-Button.Parent = ScreenGui
+local Holder = Instance.new("Frame")
+Holder.Name = "FloatHolder"
+Holder.Size = UDim2.fromOffset(CONFIG.ButtonSizePx, CONFIG.ButtonSizePx)
+Holder.BackgroundTransparency = 1
+Holder.Active = true
+Holder.Parent = ScreenGui
 
-function updateButton()
-	if lowActive then
-		Button.Text = "Low Graphics: ON"
-		Button.BackgroundColor3 = Color3.fromRGB(20,100,20)
+local anchors = {
+	["bottom-right"] = {anchor = Vector2.new(1,1), pos = UDim2.new(1,-20, 1,-20)},
+	["bottom-left"]  = {anchor = Vector2.new(0,1), pos = UDim2.new(0, 20, 1,-20)},
+	["top-right"]    = {anchor = Vector2.new(1,0), pos = UDim2.new(1,-20, 0, 20)},
+	["top-left"]     = {anchor = Vector2.new(0,0), pos = UDim2.new(0, 20, 0, 20)},
+}
+local a = anchors[string.lower(CONFIG.StartCorner)] or anchors["bottom-right"]
+Holder.AnchorPoint = a.anchor
+Holder.Position    = a.pos
+
+local Button = Instance.new("TextButton")
+Button.Size = UDim2.fromScale(1,1)
+Button.BackgroundColor3 = Color3.fromRGB(100, 20, 20)
+Button.Text = "LOW"
+Button.TextScaled = true
+Button.Font = Enum.Font.GothamBold
+Button.TextColor3 = Color3.new(1,1,1)
+Button.AutoButtonColor = true
+Button.Parent = Holder
+
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(1, 0)
+Corner.Parent = Button
+
+local function updateButton()
+	Button.Text = lowActive and "ON" or "LOW"
+	Button.BackgroundColor3 = lowActive and Color3.fromRGB(20,120,20) or Color3.fromRGB(100,20,20)
+end
+updateButton()
+
+Button.MouseButton1Click:Connect(function()
+	-- ignore click immediately after a drag
+	if Holder:GetAttribute("DragJustEnded") then
+		Holder:SetAttribute("DragJustEnded", nil)
+		return
+	end
+	toggleLow()
+	updateButton()
+end)
+
+-- Drag + edge snap
+local dragging, dragInput, startMousePos
+local function viewport()
+	local cam = workspace.CurrentCamera
+	return cam and cam.ViewportSize or Vector2.new(1920,1080)
+end
+local function clampTopLeft(absTopLeft, size)
+	local vp = viewport()
+	return Vector2.new(
+		math.clamp(absTopLeft.X, 0, math.max(0, vp.X - size.X)),
+		math.clamp(absTopLeft.Y, 0, math.max(0, vp.Y - size.Y))
+	)
+end
+local function toUDim2FromPixels(px, anchor)
+	local vp = viewport()
+	return UDim2.new(px.X / vp.X, 0, px.Y / vp.Y, 0)
+end
+local function snapToEdge()
+	local vp = viewport()
+	local size = Holder.AbsoluteSize
+	local center = Holder.AbsolutePosition + size * Holder.AnchorPoint
+
+	local left, right = center.X, vp.X - center.X
+	local top, bottom = center.Y, vp.Y - center.Y
+	local margin = CONFIG.SnapMarginPx
+
+	local minDist = math.min(left, right, top, bottom)
+	local goalPos
+	if minDist == left then
+		goalPos = Vector2.new(margin + size.X * Holder.AnchorPoint.X, center.Y)
+	elseif minDist == right then
+		goalPos = Vector2.new(vp.X - margin - size.X * (1 - Holder.AnchorPoint.X), center.Y)
+	elseif minDist == top then
+		goalPos = Vector2.new(center.X, margin + size.Y * Holder.AnchorPoint.Y)
 	else
-		Button.Text = "Low Graphics: OFF"
-		Button.BackgroundColor3 = Color3.fromRGB(100,20,20)
+		goalPos = Vector2.new(center.X, vp.Y - margin - size.Y * (1 - Holder.AnchorPoint.Y))
+	end
+
+	local goal = { Position = toUDim2FromPixels(goalPos, Holder.AnchorPoint) }
+	TweenService:Create(Holder, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goal):Play()
+
+	if CONFIG.RememberThisSession then
+		player:SetAttribute("LowOnly_PosX", goal.Position.X.Scale)
+		player:SetAttribute("LowOnly_PosY", goal.Position.Y.Scale)
+	end
+end
+local function beginDrag(input)
+	dragging = true
+	dragInput = input
+	startMousePos = input.Position
+end
+local function endDrag()
+	if dragging then
+		dragging = false
+		Holder:SetAttribute("DragJustEnded", true)
+		task.delay(0.05, function() Holder:SetAttribute("DragJustEnded", nil) end)
+		snapToEdge()
+	end
+end
+Holder.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		beginDrag(input)
+	end
+end)
+Holder.InputEnded:Connect(function(input)
+	if input == dragInput then endDrag() end
+end)
+UserInput.InputChanged:Connect(function(input)
+	if not dragging then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+	and input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+	local delta = input.Position - startMousePos
+	local startCenter = Holder.AbsolutePosition + Holder.AbsoluteSize * Holder.AnchorPoint
+	local newCenter = startCenter + Vector2.new(delta.X, delta.Y)
+
+	local half = Holder.AbsoluteSize * 0.5
+	local clampedTopLeft = clampTopLeft(newCenter - half, Holder.AbsoluteSize)
+	local clampedCenter = clampedTopLeft + half
+
+	Holder.Position = toUDim2FromPixels(clampedCenter, Holder.AnchorPoint)
+end)
+
+-- Restore last position this session
+if CONFIG.RememberThisSession then
+	local x = player:GetAttribute("LowOnly_PosX")
+	local y = player:GetAttribute("LowOnly_PosY")
+	if typeof(x) == "number" and typeof(y) == "number" then
+		Holder.Position = UDim2.new(x, 0, y, 0)
 	end
 end
 
-Button.MouseButton1Click:Connect(toggle)
-
--- Initial state
-updateButton()
+-- Keep inside viewport on resize
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	task.defer(function()
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			local topLeft = clampTopLeft(Holder.AbsolutePosition, Holder.AbsoluteSize)
+			local center = topLeft + Holder.AbsoluteSize * Holder.AnchorPoint
+			Holder.Position = toUDim2FromPixels(center, Holder.AnchorPoint)
+		end)
+	end)
+end)
